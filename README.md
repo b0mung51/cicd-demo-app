@@ -11,7 +11,7 @@ tests/
   test_calculator.py  Unit tests for the calculator module
   test_app.py         Integration tests for the Flask routes
 requirements.txt    All dependencies (flask, pytest, flake8, black, gunicorn)
-Procfile            Tells Render/Heroku how to start the app
+Procfile            Tells Render how to start the app
 ```
 
 ## Activity 1: Set Up CI
@@ -38,8 +38,8 @@ All 10 tests should pass.
 ### 3. Run the linter locally
 
 ```bash
-black --check app.py src/ tests/
-flake8 app.py src/ tests/
+black --check src/ tests/
+flake8 src/ tests/ --max-line-length=120
 ```
 
 Both should exit cleanly (no output = no errors).
@@ -50,7 +50,44 @@ Both should exit cleanly (no output = no errors).
 mkdir -p .github/workflows
 ```
 
-Create `.github/workflows/ci.yml` using the template from the slides.
+Create `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install flake8 black
+      - name: Check formatting
+        run: black --check src/ tests/
+      - name: Lint
+        run: flake8 src/ tests/ --max-line-length=120
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
+        run: pytest tests/ -v
+```
 
 ### 5. Push to a branch and open a PR
 
@@ -63,27 +100,109 @@ git push -u origin setup-ci
 
 Open a PR on GitHub, then click the **Actions** tab to watch the pipeline run.
 
----
+### 6. Turn on branch protection
 
-## Activity 2: Deploy
+GitHub → **Settings → Branches → Add rule**
 
-### Option A — Render
-
-1. Push your repo to GitHub
-2. Go to [render.com](https://render.com), sign in with GitHub
-3. New → Web Service → connect this repo
-4. Set:
-   - **Build command:** `pip install -r requirements.txt`
-   - **Start command:** `gunicorn app:app`
-5. Deploy — visit your live URL and hit `/health`
-
-### Option B — Vercel / Railway / Fly.io
-
-The `Procfile` and `requirements.txt` are compatible with most Python PaaS platforms.
+- Branch name pattern: `main`
+- Require status checks to pass before merging
+- Require pull request reviews (at least 1)
+- Require branches to be up to date
 
 ---
 
-## Run locally (without Docker)
+## Activity 2: Deploy Your App
+
+Pick one path based on your project type:
+
+| Project Type | Deploy Target |
+|---|---|
+| Static front-end (HTML/CSS/JS) | GitHub Pages |
+| Full-stack app (backend + DB) | Render |
+
+Both deploy automatically via GitHub Actions on every push to `main`.
+
+---
+
+### Path A — GitHub Pages (static front-ends)
+
+Create `.github/workflows/deploy.yml`:
+
+```yaml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: './build'
+      - uses: actions/deploy-pages@v4
+```
+
+---
+
+### Path B — Render (full-stack / this demo app)
+
+**Step 1** — Connect your repo on [render.com](https://render.com), then copy your **Service ID** and **API Key** from the Render dashboard.
+
+**Step 2** — Add them as GitHub secrets:
+
+> GitHub → Repository Settings → Secrets and variables → Actions
+
+```
+RENDER_SERVICE_ID = srv-abc123...
+RENDER_API_KEY    = rnd_abc123...
+```
+
+**Step 3** — Create `.github/workflows/deploy.yml`:
+
+```yaml
+name: Deploy to Render
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Trigger Render deploy
+        run: |
+          curl -X POST \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json"
+```
+
+> Deploy only runs **after tests pass** (`needs: test` references the job in `ci.yml`).
+
+**Step 4** — Configure the service on Render:
+
+- **Build command:** `pip install -r requirements.txt`
+- **Start command:** `gunicorn app:app`
+
+Hit your live URL then `/health` — you should get `{"status": "healthy"}`.
+
+---
+
+## Run locally
 
 ```bash
 python app.py
